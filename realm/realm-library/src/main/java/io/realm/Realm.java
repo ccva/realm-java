@@ -337,30 +337,34 @@ public class Realm extends BaseRealm {
             boolean unversioned = currentVersion == UNVERSIONED;
             commitChanges = unversioned;
 
+            RealmConfiguration configuration = realm.getConfiguration();
+
             if (unversioned) {
-                realm.setVersion(realm.configuration.getSchemaVersion());
+                realm.setVersion(configuration.getSchemaVersion());
             }
-            final RealmProxyMediator mediator = realm.configuration.getSchemaMediator();
+
+            final RealmProxyMediator mediator = configuration.getSchemaMediator();
             final Set<Class<? extends RealmModel>> modelClasses = mediator.getModelClasses();
 
-            final Map<Class<? extends RealmModel>, ColumnInfo> columnInfoMap = new HashMap<>(modelClasses.size());
             if (unversioned) {
                 // Create all of the tables.
                 for (Class<? extends RealmModel> modelClass : modelClasses) {
-                    mediator.createTable(modelClass, realm.sharedRealm);
+                    mediator.createRealmObjectSchema(modelClass, realm.getSchema());
                 }
             }
+
+            final Map<Class<? extends RealmModel>, ColumnInfo> columnInfoMap = new HashMap<>(modelClasses.size());
             for (Class<? extends RealmModel> modelClass : modelClasses) {
                 // Now that they have all been created, validate them.
                 columnInfoMap.put(modelClass, mediator.validateTable(modelClass, realm.sharedRealm, false));
             }
 
-            realm.schema.setColumnIndices(
-                    (unversioned) ? realm.configuration.getSchemaVersion() : currentVersion,
+            realm.getSchema().setColumnIndices(
+                    (unversioned) ? configuration.getSchemaVersion() : currentVersion,
                     columnInfoMap);
 
             if (unversioned) {
-                final Transaction transaction = realm.configuration.getInitialDataTransaction();
+                final Transaction transaction = configuration.getInitialDataTransaction();
                 if (transaction != null) {
                     transaction.execute(realm);
                 }
@@ -377,16 +381,18 @@ public class Realm extends BaseRealm {
         }
     }
 
+    // Everything in this method needs to be behind a transaction lock
+    // to prevent multi-process interaction while the Realm is initialized.
     private static void initializeSyncedRealm(Realm realm) {
-        // Everything in this method needs to be behind a transaction lock to prevent multi-process interaction while
-        // the Realm is initialized.
         boolean commitChanges = false;
         try {
             realm.beginTransaction();
             long currentVersion = realm.getVersion();
-            final boolean unversioned = (currentVersion == UNVERSIONED);
+            final boolean unversioned = currentVersion == UNVERSIONED;
 
-            final RealmProxyMediator mediator = realm.configuration.getSchemaMediator();
+            RealmConfiguration configuration = realm.getConfiguration();
+
+            final RealmProxyMediator mediator = configuration.getSchemaMediator();
             final Set<Class<? extends RealmModel>> modelClasses = mediator.getModelClasses();
 
             final OsRealmSchema.Creator schemaCreator = new OsRealmSchema.Creator();
@@ -396,15 +402,17 @@ public class Realm extends BaseRealm {
 
             // Assumption: When SyncConfiguration then additive schema update mode.
             final OsRealmSchema schema = new OsRealmSchema(schemaCreator);
-            long newVersion = realm.configuration.getSchemaVersion();
+            long newVersion = configuration.getSchemaVersion();
             // !!! FIXME: This appalling kludge is necessitated by current package structure/visiblity constraints.
             // It absolutely breaks encapsulation and needs to be fixed!
             long schemaNativePointer = schema.getNativePtr();
             if (realm.sharedRealm.requiresMigration(schemaNativePointer)) {
                 if (currentVersion >= newVersion) {
-                    throw new IllegalArgumentException(String.format("The schema was changed but the schema version " +
-                            "was not updated. The configured schema version (%d) must be higher than the one in the Realm " +
-                            "file (%d) in order to update the schema.", newVersion, currentVersion));
+                    throw new IllegalArgumentException(String.format(
+                            "The schema was changed but the schema version was not updated. " +
+                                    "The configured schema version (%d) must be greater than the version " +
+                                    " in the Realm file (%d) in order to update the schema.",
+                            newVersion, currentVersion));
                 }
                 realm.sharedRealm.updateSchema(schemaNativePointer, newVersion);
                 // The OS currently does not handle setting the schema version. We have to do it manually.
@@ -417,10 +425,12 @@ public class Realm extends BaseRealm {
                 columnInfoMap.put(modelClass, mediator.validateTable(modelClass, realm.sharedRealm, false));
             }
 
-            realm.getSchema().setColumnIndices((unversioned) ? newVersion : currentVersion, columnInfoMap);
+            realm.getSchema().setColumnIndices(
+                    (unversioned) ? newVersion : currentVersion,
+                    columnInfoMap);
 
             if (unversioned) {
-                final Transaction transaction = realm.configuration.getInitialDataTransaction();
+                final Transaction transaction = configuration.getInitialDataTransaction();
                 if (transaction != null) {
                     transaction.execute(realm);
                 }
@@ -447,7 +457,7 @@ public class Realm extends BaseRealm {
      * @param json an array where each JSONObject must map to the specified class.
      * @throws RealmException if mapping from JSON fails.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      */
     public <E extends RealmModel> void createAllFromJson(Class<E> clazz, JSONArray json) {
         if (clazz == null || json == null) {
@@ -475,7 +485,7 @@ public class Realm extends BaseRealm {
      * @param json array with object data.
      * @throws IllegalArgumentException if trying to update a class without a {@link io.realm.annotations.PrimaryKey}.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @throws RealmException if unable to map JSON.
      * @see #createAllFromJson(Class, org.json.JSONArray)
      */
@@ -503,7 +513,7 @@ public class Realm extends BaseRealm {
      * @param json the JSON array as a String where each object can map to the specified class.
      * @throws RealmException if mapping from JSON fails.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      */
     public <E extends RealmModel> void createAllFromJson(Class<E> clazz, String json) {
         if (clazz == null || json == null || json.length() == 0) {
@@ -532,7 +542,7 @@ public class Realm extends BaseRealm {
      * @throws IllegalArgumentException if trying to update a class without a {@link io.realm.annotations.PrimaryKey}.
      * @throws RealmException if unable to create a JSON array from the json string.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @see #createAllFromJson(Class, String)
      */
     public <E extends RealmModel> void createOrUpdateAllFromJson(Class<E> clazz, String json) {
@@ -563,7 +573,7 @@ public class Realm extends BaseRealm {
      * @param inputStream the JSON array as a InputStream. All objects in the array must be of the specified class.
      * @throws RealmException if mapping from JSON fails.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @throws IOException if something was wrong with the input stream.
      */
     @TargetApi(Build.VERSION_CODES.HONEYCOMB)
@@ -598,7 +608,7 @@ public class Realm extends BaseRealm {
      * @param in the InputStream with a list of object data in JSON format.
      * @throws IllegalArgumentException if trying to update a class without a {@link io.realm.annotations.PrimaryKey}.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @throws RealmException if unable to read JSON.
      * @see #createOrUpdateAllFromJson(Class, java.io.InputStream)
      */
@@ -638,7 +648,7 @@ public class Realm extends BaseRealm {
      * @return created object or {@code null} if no JSON data was provided.
      * @throws RealmException if the mapping from JSON fails.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @see #createOrUpdateObjectFromJson(Class, org.json.JSONObject)
      */
     public <E extends RealmModel> E createObjectFromJson(Class<E> clazz, JSONObject json) {
@@ -665,7 +675,7 @@ public class Realm extends BaseRealm {
      * @return created or updated {@link io.realm.RealmObject}.
      * @throws IllegalArgumentException if trying to update a class without a {@link io.realm.annotations.PrimaryKey}.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @throws RealmException if JSON data cannot be mapped.
      * @see #createObjectFromJson(Class, org.json.JSONObject)
      */
@@ -692,7 +702,7 @@ public class Realm extends BaseRealm {
      * @return created object or {@code null} if JSON string was empty or null.
      * @throws RealmException if mapping to json failed.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      */
     public <E extends RealmModel> E createObjectFromJson(Class<E> clazz, String json) {
         if (clazz == null || json == null || json.length() == 0) {
@@ -721,7 +731,7 @@ public class Realm extends BaseRealm {
      * @return created or updated {@link io.realm.RealmObject}.
      * @throws IllegalArgumentException if trying to update a class without a {@link io.realm.annotations.PrimaryKey}.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @throws RealmException if JSON object cannot be mapped from the string parameter.
      * @see #createObjectFromJson(Class, String)
      */
@@ -754,7 +764,7 @@ public class Realm extends BaseRealm {
      * @return created object or {@code null} if JSON string was empty or null.
      * @throws RealmException if the mapping from JSON failed.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @throws IOException if something went wrong with the input stream.
      */
     @TargetApi(Build.VERSION_CODES.HONEYCOMB)
@@ -806,7 +816,7 @@ public class Realm extends BaseRealm {
      * @return created or updated {@link io.realm.RealmObject}.
      * @throws IllegalArgumentException if trying to update a class without a {@link io.realm.annotations.PrimaryKey}.
      * @throws IllegalArgumentException if the JSON object doesn't have a primary key property but the corresponding
-     * {@link RealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
+     * {@link StandardRealmObjectSchema} has a {@link io.realm.annotations.PrimaryKey} defined.
      * @throws RealmException if failure to read JSON.
      * @see #createObjectFromJson(Class, java.io.InputStream)
      */

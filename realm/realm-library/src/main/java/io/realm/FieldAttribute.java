@@ -41,7 +41,7 @@ public enum FieldAttribute {
      * null} depends on the type of the field.
      *
      * @see io.realm.annotations.Required
-     * @see RealmObjectSchema#setRequired(String, boolean)
+     * @see StandardRealmObjectSchema#setRequired(String, boolean)
      */
     REQUIRED
 }

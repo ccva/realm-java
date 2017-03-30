@@ -50,11 +50,11 @@ public abstract class RealmSchema {
     public abstract RealmObjectSchema get(String className);
 
     /**
-     * Returns the {@link RealmObjectSchema}s for all RealmObject classes that can be saved in this Realm.
+     * Returns the {@link StandardRealmObjectSchema}s for all RealmObject classes that can be saved in this Realm.
      *
      * @return the set of all classes in this Realm or no RealmObject classes can be saved in the Realm.
      */
-    public abstract Set<RealmObjectSchema> getAll();
+    public abstract Set<? extends RealmObjectSchema> getAll();
 
     /**
      * Adds a new class to the Realm.

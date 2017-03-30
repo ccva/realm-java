@@ -32,17 +32,6 @@ class DefaultRealmModuleMediator extends RealmProxyMediator {
     }
 
     @Override
-    public Table createTable(Class<? extends RealmModel> clazz, SharedRealm sharedRealm) {
-        checkClass(clazz);
-
-        if (clazz.equals(some.test.AllTypes.class)) {
-            return io.realm.AllTypesRealmProxy.initTable(sharedRealm);
-        } else {
-            throw getMissingProxyClassException(clazz);
-        }
-    }
-
-    @Override
     public RealmObjectSchema createRealmObjectSchema(Class<? extends RealmModel> clazz, RealmSchema realmSchema) {
         checkClass(clazz);
 
